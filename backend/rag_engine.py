@@ -1,8 +1,9 @@
 from pathlib import Path
 from typing import List, Tuple
+import logging
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain.schema import Document
 
 from models.embedding import get_embedding
@@ -22,13 +23,16 @@ class RagEngine:
     def _load_documents(self) -> List[Document]:
         documents: List[Document] = []
         for path in self.docs_dir.glob('*'):
-            if path.suffix.lower() == '.pdf':
-                loader = PDFLoader(str(path))
-            elif path.suffix.lower() == '.pptx':
-                loader = PPTLoader(str(path))
-            else:
-                continue
-            documents.extend(loader.load())
+            try:
+                if path.suffix.lower() == '.pdf':
+                    loader = PDFLoader(str(path))
+                elif path.suffix.lower() == '.pptx':
+                    loader = PPTLoader(str(path))
+                else:
+                    continue
+                documents.extend(loader.load())
+            except Exception as e:  # noqa: BLE001
+                logging.error("Failed to parse %s: %s", path, e)
         return documents
 
     def ingest(self) -> None:
@@ -37,19 +41,27 @@ class RagEngine:
             return
         splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
         docs = splitter.split_documents(documents)
-        self.vectorstore = FAISS.from_documents(docs, self.embedding)
-        self.vectorstore.save_local(str(self.index_dir))
+        try:
+            self.vectorstore = FAISS.from_documents(docs, self.embedding)
+            self.vectorstore.save_local(str(self.index_dir))
+        except Exception as e:  # noqa: BLE001
+            logging.error("Failed to build vectorstore: %s", e)
 
     def _load_vectorstore(self) -> FAISS:
         if self.vectorstore:
             return self.vectorstore
         index_file = self.index_dir / 'index.faiss'
         if index_file.exists():
-            self.vectorstore = FAISS.load_local(
-                str(self.index_dir), self.embedding, allow_dangerous_deserialization=True
-            )
-            return self.vectorstore
-        raise ValueError('Vector store not found. Ingest documents first.')
+            try:
+                self.vectorstore = FAISS.load_local(
+                    str(self.index_dir),
+                    self.embedding,
+                    allow_dangerous_deserialization=True,
+                )
+                return self.vectorstore
+            except Exception as e:  # noqa: BLE001
+                logging.error("Failed to load vectorstore: %s", e)
+        raise ValueError("Vector store not found. Ingest documents first.")
 
     def query(self, query: str, model_name: str) -> Tuple[str, List[str]]:
         vs = self._load_vectorstore()
@@ -58,6 +70,14 @@ class RagEngine:
         context = "\n\n".join(d.page_content for d in docs)
         llm = get_llm(model_name)
         prompt = f"Answer the question based on the context:\n{context}\n\nQuestion: {query}"
-        answer = llm.predict(prompt)
+        try:
+            answer = llm.invoke(prompt)
+        except OSError as e:
+            if "10061" in str(e):
+                raise ConnectionError("LLM service is unreachable") from e
+            raise
+        except Exception as e:  # noqa: BLE001
+            logging.error("LLM invocation failed: %s", e)
+            raise
         sources = [d.metadata.get('source', '') for d in docs]
         return answer, sources

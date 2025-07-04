@@ -33,10 +33,16 @@ async def ingest():
     rag.ingest()
     return {"status": "ingested"}
 
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
 @app.get("/ask")
 async def ask(query: str, model: str = "llama3"):
     try:
         answer, sources = rag.query(query, model)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except ConnectionError as e:
+        raise HTTPException(status_code=503, detail=str(e))
     return {"answer": answer, "sources": sources}

@@ -1,6 +1,6 @@
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
 
 def get_embedding() -> HuggingFaceEmbeddings:
-    """Return embedding model."""
-    return HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
+    """Return multilingual embedding model."""
+    return HuggingFaceEmbeddings(model_name="intfloat/multilingual-e5-base")
